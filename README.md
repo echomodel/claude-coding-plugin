@@ -27,73 +27,15 @@ An AI agent that scans repositories for personal information leaks.
 Unlike regex-based scanners, privacy-guard reasons about context — it
 catches things no pattern matcher can.
 
-### What it scans
+- Pattern-based detection from configurable PERSON.md
+- OS-level discovery (`$USER`, `$HOME`) at runtime
+- Judgment-based detection of contextual leaks
+- Git author identity and visibility-aware scan tiers
+- Read-only by design — cannot modify your repository
 
-| Scope | Default | On request |
-|-------|---------|------------|
-| Working tree (tracked + untracked files) | Yes | |
-| Staged changes | Yes | |
-| Unpushed commits (messages + diffs) | Yes | |
-| Open GitHub issues (titles, bodies, comments) | Yes | |
-| Open GitHub PRs (titles, bodies, comments) | Yes | |
-| Full git history (all commits, branches, tags) | | Yes |
-| Stash entries and reflog | | Yes |
-| Closed issues and PRs | | Yes |
-
-### What it catches
-
-**Pattern-based** — matches specific personal values you configure:
-
-- Names (yours, family members, variants and nicknames)
-- Email addresses and personal email domains
-- Phone number area codes
-- Custom/personal domains
-- Financial service providers (banks, brokerages)
-- Employer references and employer-specific terms
-- Property names and associated locations
-- GitHub username in non-self-referential contexts
-- Private repo names referenced from public repos
-- Workspace root paths and contributor-specific local paths
-
-**OS-discovered at runtime** — no configuration needed:
-
-- OS username (from `$USER`)
-- Home directory path (from `$HOME`)
-
-**Judgment-based** — contextual leaks that no regex can catch:
-
-- A commit message that says "fix the bug Alice reported" instead of
-  "fix input validation bug"
-- An issue body that says "I need this for my food tracking app"
-  instead of "applications that log structured data need..."
-- A README that frames a project as "built for tracking my rental
-  properties" instead of "a property management tool"
-- Example code that uses a real Google Doc ID from a recent session
-- Test fixtures populated with real family member names
-- Documentation that reveals which personal products consume the repo
-
-**Git author identity checks:**
-
-- Commit author matching git config: expected, not flagged
-- Same name/email in commit messages, file content, or issues: flagged
-- Author email domain mismatch across commits (e.g., work email in
-  personal repo or vice versa): flagged
-
-**Repo visibility awareness:**
-
-- Public repos and non-`personal-` private repos: STRICT — all
-  categories flagged
-- Private repos matching a configurable "personal" prefix: RELAXED —
-  only true secrets (passwords, API keys, SSNs, private keys)
-
-### Structured JSON output
-
-Every scan produces a machine-parseable JSON block alongside the
-human-readable report. Automated callers (other agents, CI, test
-harnesses) can parse findings programmatically. Categories and
-location types use suggested values for consistency but are open
-strings — the agent can report findings that don't fit predefined
-categories.
+See [docs/agents/privacy-guard/](docs/agents/privacy-guard/README.md)
+for full documentation including scan scope, detection categories,
+containment model, and output schema.
 
 ### Prerequisite: personal patterns file
 
@@ -140,14 +82,6 @@ at runtime — those do not go in this file.
 
 **This file must never be committed to any repository.** It lives
 only on your machine.
-
-### Read-only by design
-
-The agent cannot modify your repository. Its tool allowlist is locked
-to read-only operations: `Read`, `Grep`, `Glob`, read-only `git`
-commands, and read-only `gh` commands. No `Write`, `Edit`, `git push`,
-`gh issue create`, or any other write operation is permitted. It
-reports findings and stops.
 
 ## Install as plugin
 
