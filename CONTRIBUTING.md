@@ -228,6 +228,41 @@ Three reinforcement layers protect against accidental PII exposure:
 The publish-agent provides an independent clean-room review as the final
 gate before any content reaches GitHub.
 
+### Subagent containment principle
+
+The privacy-guard agent exists to **contain** PII exposure. It reads
+sensitive data (PERSON.md, repo content) so the parent agent doesn't
+have to. This containment is only effective if the subagent's output
+does not leak actual sensitive values back into the parent agent's
+context.
+
+**Rules for subagent output:**
+
+- **Never echo PERSON.md contents** — the agent already has this rule
+  (Hard Rules in the agent definition). The structured JSON and
+  human-readable report must not include the actual patterns being
+  scanned for.
+- **Findings report matched values, not scan targets** — a finding says
+  "found email in src/config.py:42" with the matched value. It does
+  not list all emails that were searched for.
+- **Scan metadata must be value-safe** — the structured output should
+  include metadata about what categories were scanned, how many values
+  per category, and what sources those values came from (PERSON.md
+  frontmatter, PERSON.md body, OS runtime, prompt, built-in patterns).
+  But it must report **counts and sources, not the values themselves**.
+  For example: `{"category": "emails", "values_count": 3, "source":
+  "person_md_frontmatter"}` — not the actual email addresses.
+- **Attribution per finding** — each finding should indicate where the
+  agent learned that the matched value was sensitive: `person_md_frontmatter`,
+  `person_md_body`, `prompt`, `builtin_pattern`, `os_runtime`, or
+  `contextual_judgment`. This enables tests to assert on *why* the agent
+  flagged something, not just *what* it flagged.
+- **The parent agent context is the threat model** — if a value appears
+  in the subagent's output, it enters the parent agent's context window.
+  The parent agent may then inadvertently include it in commits, issues,
+  PR descriptions, or conversation. The subagent must assume its output
+  will be consumed by an agent that handles public-facing artifacts.
+
 ### Safety rules for interactive sessions
 
 When working on this repo interactively (not through an agent):
