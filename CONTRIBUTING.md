@@ -191,11 +191,42 @@ differently.
 
 1. Run `./build` to sync vendored skills
 2. Run `pytest tests/` to validate
-3. Bump version in `.claude-plugin/plugin.json`
-4. Commit all changes
-5. Tag: `git tag v<version>`
-6. Push: `git push origin main --tags`
-7. Update marketplace `ref` in the claude-plugins repo
+3. Bump, commit, and tag:
+   ```bash
+   ./version bump            # patch: 0.1.0 → 0.1.1
+   ./version bump --minor    # minor: 0.1.1 → 0.2.0
+   ./version bump --major    # major: 0.2.0 → 1.0.0
+   ```
+   This updates `.claude-plugin/plugin.json`, commits the change,
+   and creates an annotated tag `v<new>`. Use `--no-tag` to skip
+   the tag if you need to amend or adjust before tagging.
+4. Push: `git push origin main --tags`
+5. Update marketplace `ref` in the claude-plugins repo
+
+The `./version` script is pure stdlib Python — no venv needed. Run
+`./version` with no arguments to show the current version.
+
+### Why not just edit plugin.json by hand?
+
+The script ensures the version in plugin.json, the git commit message,
+and the git tag all agree. Manual edits risk version/tag mismatches
+that break marketplace installs.
+
+### Agent parameterization note
+
+Privacy-guard and privacy-audit are split into separate agents rather
+than parameterized modes of one agent. Claude Code agents receive
+inputs only through the prompt (unstructured text from the caller or
+user), the agent `.md` definition (static), and files the agent reads
+at runtime. There is no structured input contract — no typed parameters,
+no JSON schema for inputs, no equivalent of function arguments.
+
+This means the caller's prompt can override config file settings (as
+we observed: a parent agent requesting "deep scan" overrode the user's
+`pre-push` config). Until Claude Code supports formal agent input
+schemas (e.g., A2A Agent Cards, MCP tool wrapping, or frontmatter
+parameter declarations), splitting agents by usage pattern is more
+reliable than runtime parameterization.
 
 ## Agent definitions
 
