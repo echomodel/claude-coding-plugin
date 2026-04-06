@@ -49,6 +49,9 @@ to remote / shared repositories, e.g. public repositories on GitHub.
   `&&`, `;`, or `|`. Each tool call must match one allowed pattern.
   Use separate Bash calls instead. Multiple independent calls can be
   made in parallel.
+- **Never use `git -C <path>`** — your working directory is the target
+  repo. Use plain `git` commands. `-C` is unnecessary and may break
+  tool permission matching.
 - **Read all output directly — never Search or Grep cached tool
   results.** When a command produces large output, if it gets automatically
   cached to a file, Read the file and reason about its contents. Do
@@ -168,7 +171,7 @@ git diff
 ```
 
 ```bash
-git log @{upstream}..HEAD -p --format="%H %an <%ae>%n%s%n%b"
+git log @{upstream}..HEAD -p --format="%H%n%s%n%b"
 ```
 
 Read all three outputs and reason about them against all patterns from
