@@ -79,8 +79,11 @@ def _init_git_repo(repo_dir: Path, author_name="Test Bot",
     agents_dir = repo_dir / ".claude" / "agents"
     agents_dir.mkdir(parents=True, exist_ok=True)
     (agents_dir / "privacy-guard.md").symlink_to(AGENT_SOURCE)
-    # Initial empty commit so HEAD exists
-    subprocess.run(["git", "commit", "--allow-empty", "-m", "initial"],
+    # Gitignore .claude/ so the symlink doesn't show as untracked
+    (repo_dir / ".gitignore").write_text(".claude/\n")
+    subprocess.run(["git", "add", ".gitignore"], cwd=repo_dir, check=True, capture_output=True)
+    # Initial commit so HEAD exists
+    subprocess.run(["git", "commit", "-m", "initial"],
                    cwd=repo_dir, check=True, capture_output=True, env=env)
 
     if with_upstream:
