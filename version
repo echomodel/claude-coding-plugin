@@ -106,7 +106,23 @@ def cmd_bump(args):
     else:
         print("Skipped tag (--no-tag)")
 
-    print(f"Done. Push with: git push origin main --tags")
+    tag = f"v{new}"
+    name = json.loads(PLUGIN_JSON.read_text()).get("name", "claude-coding-plugin")
+    mp = "../claude-plugins/.claude-plugin/marketplace.json"
+
+    print(f"\nNext steps:")
+    print(f"  1. Push this repo:")
+    print(f"     git push origin main --tags")
+    print(f"")
+    print(f"  2. Update marketplace ref:")
+    print(f"     cd ../claude-plugins")
+    print(f'     sed -i \'\' \'/"name": "{name}"/,/"ref":/ s/"ref": "[^"]*"/"ref": "{tag}"/\' .claude-plugin/marketplace.json')
+    print(f"     # Or manually: set \"ref\": \"{tag}\" for the {name} entry in .claude-plugin/marketplace.json")
+    print(f"     git add -A && git commit -m 'Update {name} to {tag}' && git push")
+    print(f"")
+    print(f"  3. Install/update:")
+    print(f"     claude plugin marketplace update")
+    print(f"     claude plugin install {name}")
 
 
 def main():
