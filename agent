@@ -28,15 +28,6 @@ def _resolve_agent(name: str) -> Path:
     return source
 
 
-def _resolve_test_dir(name: str) -> Path:
-    """Resolve agent name to test directory or exit."""
-    test_dir = TESTS_DIR / name.replace("-", "_")
-    if not test_dir.is_dir():
-        print(f"Error: no tests found at {test_dir}")
-        sys.exit(1)
-    return test_dir
-
-
 def cmd_install(args):
     """Install an agent to user or project scope."""
     source = _resolve_agent(args.name)

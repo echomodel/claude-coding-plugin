@@ -149,33 +149,22 @@ don't want it showing up in the global agent list:
 
 | Agent | Description |
 |-------|-------------|
-| `privacy-guard` | Read-only PII scanner — scans files, commits, issues, PRs |
+| `privacy-guard` | Pre-push PII scanner — staged diffs, unstaged diffs, unpushed commits |
+| `privacy-audit` | Full-repo PII audit — git history, optionally issues/PRs |
 | `refactoring-agent` | Autonomous issue-driven refactoring in isolated worktrees |
 | `publish-agent` | Clean-room branch review and merge+push |
 
 ### Testing agents
 
+See [docs/AGENT-CLI.md](docs/AGENT-CLI.md) for full `./agent` CLI
+documentation including install, test, filtering, parallelism, and
+debug logging.
+
 ```bash
-# Run all tests for an agent
 ./agent test privacy-guard
-
-# Run a single test
-./agent test privacy-guard -k test_email_in_file
-
-# Run in parallel (5 workers)
-./agent test privacy-guard -n 5
-
-# With debug logging (logs to /tmp/privacy-guard-tests/)
-./agent test privacy-guard --debug -k test_missing_person_md
+./agent test privacy-guard -k test_email_in_staged_file
+./agent test privacy-guard -n 5 --debug
 ```
-
-Watch debug logs in real time:
-
-```bash
-tail -f /tmp/privacy-guard-tests/*.log
-```
-
-The test venv (`.venv-test/`) is auto-created on first run.
 
 ## Build
 
