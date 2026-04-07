@@ -59,7 +59,7 @@ def _write_person_md(path: Path) -> None:
 
 
 # Path to the agent source file in the repo under test
-AGENT_SOURCE = Path(__file__).resolve().parent.parent.parent.parent / "agents" / "privacy-guard.md"
+AGENT_SOURCE = Path(__file__).resolve().parent.parent.parent.parent / "assets" / "agents" / "privacy-guard.md"
 
 # Template repo with ~20 clean Python files for realistic test repos
 TEMPLATE_REPO = Path(__file__).resolve().parent.parent.parent / "fixtures" / "template_repo"

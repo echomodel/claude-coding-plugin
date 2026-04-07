@@ -4,9 +4,9 @@
 
 **Why don't we copy the agent to `~/.claude/agents/` for testing?**
 That creates a sync problem — the copy can drift from the source in
-`agents/`. Every change would require a re-copy. Instead, tests create
-a symlink from each temp repo's `.claude/agents/privacy-guard.md` back
-to the source file. Claude discovers it via local project scope. The
+`assets/agents/`. Every change would require a re-copy. Instead, tests
+create a symlink from each temp repo's `.claude/agents/privacy-guard.md`
+back to the source file. Claude discovers it via local project scope. The
 test always runs against the current source. See "How agent tests work"
 under Testing.
 
@@ -16,11 +16,13 @@ agent should be testable in isolation. The symlink approach tests the
 agent directly without plugin discovery, marketplace install, or any
 other machinery.
 
-**What's the difference between `skills/` and `.claude/skills/`?**
-`skills/` is the product — shipped with the plugin, available to users.
-`.claude/skills/` is for developing this repo — project-level skills
-only available when you open a Claude session here. They are never
-shipped. See "Context file architecture" below.
+**What's the difference between `assets/skills/` and `.claude/skills/`?**
+`assets/skills/` contains reusable skills that are the source of truth
+for this repo. They get copied into `plugin/dist/skills/` by the build
+script and shipped with the plugin. `.claude/skills/` is for developing
+this repo — project-level skills only available when you open a Claude
+session here. They are never shipped. See "Context file architecture"
+below.
 
 **Does the plugin inject context into repos that install it?**
 The plugin's root CLAUDE.md is for developing the plugin itself — it
@@ -35,37 +37,181 @@ repo.
 Yes — if the agent is in `~/.claude/agents/` (user scope) or
 `./.claude/agents/` (project scope), use the bare name. If loaded
 via a plugin, use the namespaced form:
-`--agent claude-coding-plugin:privacy-guard`. The `test_via_plugin.py`
+`--agent claude-coding:privacy-guard`. The `test_via_plugin.py`
 integration test verifies plugin-based discovery end-to-end.
 
-## Architecture
+## Repository structure
 
-This plugin has three types of content:
+This repo follows the **aggregator plugin pattern** — a plugin that
+owns reusable assets (agents, skills), composes them with vendored
+marketplace dependencies and plugin-specific infrastructure, and
+ships a fully assembled distribution that works with zero build steps
+at install time.
 
-- **Native skills** — developed here, source of truth is this repo
-- **Vendored skills** — sourced from echoskill marketplace, copied at build time
-- **Agent definitions** — `.md` files in `agents/`, auto-discovered by the plugin system
+### Aggregator plugin pattern
+
+This pattern is reusable across any plugin that aggregates and
+composes reusable assets. The key principles:
+
+1. **Source separation** — reusable assets (`assets/`), authored
+   plugin infrastructure (`plugin/src/`), and assembled output
+   (`plugin/dist/`) never share a directory. Each has a clear role
+   and edit policy.
+
+2. **Skills as modular agent extensions** — the default agent preloads
+   skills via `skills:` frontmatter. These skills are the agent's
+   detailed workflow instructions, modularized so they're independently
+   reusable from a marketplace. The agent body stays lean (universal
+   rules only); specific workflows live in skills.
+
+3. **Go vendor pattern for distribution** — `plugin/dist/` is
+   committed to main so marketplace install works with no build step.
+   `./build` regenerates it from source + vendored dependencies.
+   `./build --check` verifies it's current (CI gate).
+
+4. **Dependency pinning without a new source of truth** — vendored
+   skills are snapshots from the marketplace at a specific ref.
+   `build.cfg` declares what to vendor and from where. The vendored
+   copies in `plugin/dist/` are the only copies — no duplication
+   at repo root. Native skills (in `assets/skills/`) take precedence
+   over vendored skills with the same name.
+
+5. **Marketplace-ready assets** — everything in `assets/` can be
+   pointed at by a marketplace entry independently of the plugin.
+   A skills marketplace can reference `assets/skills/safe-commit`;
+   an agents marketplace can reference `assets/agents/privacy-guard`.
+   The plugin bundles them, but they stand alone.
+
+6. **Plugin-specific agents are not second-class** — `plugin/src/agents/`
+   holds agents that are coupled to this plugin's skill/hook ecosystem
+   (e.g., claude-coder depends on safe-commit → privacy-guard). These
+   are fully featured agents, just not independently reusable.
+
+This contrasts with the **simple plugin pattern** where the repo root
+IS the plugin directory — no build step, no asset separation, no
+vendoring. Simple plugins are appropriate when the plugin is
+self-contained with no reusable assets to share.
+
+### Directory layout
+
+```
+claude-coding/
+  assets/              <- reusable, marketplaceable (source of truth)
+    agents/            <- portable agent definitions
+    skills/            <- portable skills (agentskills.io standard)
+    README.md
+  plugin/
+    src/               <- authored plugin infrastructure (tracked)
+      .claude-plugin/plugin.json
+      agents/          <- plugin-specific agents (e.g., claude-coder)
+      hooks/
+      settings.json
+      .mcp.json
+    dist/              <- assembled output (committed, Go vendor pattern)
+      ...              <- everything from assets/ + plugin/src/ + vendored
+  build                <- assembles plugin/dist/ from all sources
+  build.cfg            <- marketplace URLs for vendored skills
+```
+
+### Directory roles
+
+| Directory | Edit directly? | Committed? | Role |
+|-----------|---------------|------------|------|
+| `assets/agents/` | Yes | Yes | Reusable agents — marketplace candidates |
+| `assets/skills/` | Yes | Yes | Reusable skills — marketplace candidates |
+| `plugin/src/` | Yes | Yes | Authored plugin infrastructure |
+| `plugin/src/agents/` | Yes | Yes | Plugin-specific agents (not reusable) |
+| `plugin/dist/` | **Never** | Yes | Assembled by `./build` — Go vendor pattern |
+
+### Why `plugin/dist/` is committed (Go vendor pattern)
+
+The marketplace constraint: `claude plugin install` clones from git and
+expects a working plugin at that ref. No build runs at install time.
+This matches Go's `vendor/` directory and protobuf generated code
+patterns — generated output committed for consumer convenience.
+
+`./build --check` verifies `plugin/dist/` matches what `./build` would
+produce. Use this in CI to catch stale vendored content.
+
+### What goes where
+
+| Content | Belongs in |
+|---------|-----------|
+| Reusable agent (works standalone, marketplace candidate) | `assets/agents/` |
+| Reusable skill (agentskills.io, marketplace candidate) | `assets/skills/` |
+| Plugin-specific agent (coupled to this plugin's skills/hooks) | `plugin/src/agents/` |
+| Plugin config (plugin.json, settings.json, hooks, .mcp.json) | `plugin/src/` |
+| Vendored skills from external marketplaces | `build.cfg` → `plugin/dist/skills/` |
+
+### Reusable vs plugin-specific agents
+
+An agent is reusable if it works standalone without depending on this
+plugin's skills, hooks, or other agents. `privacy-guard` and
+`privacy-audit` are reusable — they scan independently.
+
+`claude-coder` is plugin-specific — its `skills:` frontmatter references
+`safe-commit`, which invokes `privacy-guard`, creating a dependency
+chain that only works with this plugin installed.
+
+### Skills as modular agent extensions
+
+The claude-coder agent's `skills:` frontmatter preloads skills that
+are effectively modular extensions of the agent body itself:
+
+```yaml
+skills:
+  - safe-commit          # commit workflow with privacy gate
+  - author-github-issue  # issue authoring conventions
+  - capture-context      # session wrap-up and context preservation
+  - sociable-unit-tests  # testing philosophy and patterns
+  - project-docs         # documentation structure and safe refactoring
+```
+
+These skills are independently reusable — any agent or user can invoke
+them. But for this plugin, they function as the agent's detailed
+instructions for specific workflows, modularized so they can also be
+used outside the plugin context.
+
+This pattern is valuable because:
+
+- **Reuse without duplication** — the same skill body serves both the
+  plugin's default agent and standalone use via marketplace install.
+- **Independent evolution** — a skill can be updated in the marketplace
+  without changing the agent definition. The plugin vendors the latest
+  version at build time.
+- **Composability** — different agents can compose different skill sets.
+  A minimal agent might load only `safe-commit`; the full claude-coder
+  loads all five.
+- **The agent itself may or may not be reusable** — claude-coder is
+  plugin-specific (coupled to safe-commit → privacy-guard), but the
+  skills it preloads are all independently reusable assets published
+  to the marketplace.
 
 ## Build process
 
-The build script vendors skills from external marketplaces into `skills/`.
-Run it before committing vendored skill updates or tagging a release.
+The build script assembles `plugin/dist/` from all sources:
 
 ```bash
-./build
+./build          # assemble plugin/dist/
 ```
 
-This clones the echoskill repo, copies the listed skills into `skills/`,
-and prints a summary. Native skills are never overwritten.
+Sources assembled into `plugin/dist/`:
+1. `plugin/src/` — plugin infrastructure (plugin.json, hooks, settings, .mcp.json)
+2. `plugin/src/agents/` — plugin-specific agents (claude-coder)
+3. `assets/agents/` — reusable agents (privacy-guard, privacy-audit)
+4. `assets/skills/` — native skills (safe-commit)
+5. `build.cfg` — vendored skills from echoskill marketplace
+
+Native skills (from `assets/skills/`) take precedence over vendored
+skills with the same name.
 
 ### Dogfooding
 
 The build process is designed to migrate to the `echoskill` CLI
 (`eskill`) once it exists. The current raw git clone is a temporary
-implementation. When `eskill install --target skills/` is available,
-the build script will use it — making this plugin the primary consumer
-and validator of the echoskill CLI. Keeping our daily-use plugin
-dependent on our own tooling ensures that tooling stays reliable.
+implementation. When `eskill install --target plugin/dist/skills/` is
+available, the build script will use it — making this plugin the primary
+consumer and validator of the echoskill CLI.
 
 ### Configuration
 
@@ -81,27 +227,55 @@ skills =
     ...
 ```
 
-To add a vendored skill: add it to `build.cfg`, run `./build`, verify
-with `pytest tests/`, commit.
+To add a vendored skill: add it to `build.cfg`, run `./build`, commit
+the updated `plugin/dist/`.
 
-To add a native skill: create `skills/<name>/SKILL.md`, reference it
-in agent definitions and/or CLAUDE.md as needed.
+To add a native skill: create `assets/skills/<name>/SKILL.md`, run
+`./build`, commit both the source and the updated `plugin/dist/`.
 
 ## Testing
 
-### Unit tests (default)
+Three test tiers, from fast/free to slow/expensive:
+
+### Lint (default — runs without build)
 
 ```bash
-pytest tests/
+pytest tests/lint/
 ```
 
-Validates plugin structure:
-- Every skill referenced in agent definitions exists in `skills/`
-- Every SKILL.md has valid frontmatter (name, description)
-- Every skill listed in `build.cfg` is present after build
-- No empty skill directories
+Static validation of source files. No build step required:
+- Agent `.md` files have valid frontmatter (name, description)
+- Agent `skills:` refs resolve to `assets/skills/` or `build.cfg`
+- Skill SKILL.md files have valid frontmatter
+- Plugin src files exist and are valid JSON
+- `settings.json` agent ref resolves to a real agent file
 
-Run after every build and before every commit.
+### Build structural (requires `./build` first)
+
+```bash
+./build
+pytest tests/build/
+```
+
+Validates the assembled `plugin/dist/` artifact:
+- Every agent from `assets/agents/` and `plugin/src/agents/` is present
+- Every native skill from `assets/skills/` is present
+- Every vendored skill from `build.cfg` is present
+- Plugin infrastructure files exist and are valid JSON
+
+These tests auto-skip with a clear message if `plugin/dist/` is
+missing or stale (source files newer than last build).
+
+### CI staleness check
+
+In CI, verify committed `plugin/dist/` is current:
+
+```bash
+./build
+git diff --exit-code plugin/dist/
+```
+
+If the diff is non-empty, someone changed source without rebuilding.
 
 ### Integration tests (privacy-guard agent)
 
@@ -130,9 +304,9 @@ the recommended test execution order and failure diagnosis steps.
 
 #### How agent tests work (symlink isolation)
 
-The agent source lives in `agents/privacy-guard.md` — the same file
-shipped with the plugin. Integration tests need to invoke this agent
-via `claude --agent privacy-guard`, but without:
+The agent source lives in `assets/agents/privacy-guard.md`. Integration
+tests need to invoke this agent via `claude --agent privacy-guard`, but
+without:
 
 - Installing the plugin (via marketplace or `--plugin-dir`)
 - Copying the agent to `~/.claude/agents/` (creates a sync problem)
@@ -147,14 +321,14 @@ The test harness exploits option 2. For each test, `conftest.py`:
 1. Creates a temporary git repo in an OS-managed temp directory
 2. Creates `.claude/agents/` inside that temp repo
 3. Symlinks `.claude/agents/privacy-guard.md` → the source file at
-   `<plugin-repo>/agents/privacy-guard.md`
+   `<repo>/assets/agents/privacy-guard.md`
 4. Runs `claude --agent privacy-guard -p "..."` with `cwd` set to
    the temp repo
 
 When Claude starts in the temp repo directory, it discovers the agent
 via the local `.claude/agents/` path. The symlink guarantees the test
 always runs against the **current source code** of the agent — edits
-to `agents/privacy-guard.md` are immediately reflected in the next
+to `assets/agents/privacy-guard.md` are immediately reflected in the next
 test run without any copy, sync, or install step.
 
 This approach:
@@ -220,28 +394,56 @@ parameterization. See the open issues for agent contract research.
 
 ## Release workflow
 
-1. Run `./build` to sync vendored skills
-2. Run `pytest tests/` to validate
-3. Bump, commit, and tag:
-   ```bash
-   ./version bump            # patch: 0.1.0 → 0.1.1
-   ./version bump --minor    # minor: 0.1.1 → 0.2.0
-   ./version bump --major    # major: 0.2.0 → 1.0.0
-   ```
-   This updates `.claude-plugin/plugin.json`, commits the change,
-   and creates an annotated tag `v<new>`. Use `--no-tag` to skip
-   the tag if you need to amend or adjust before tagging.
-4. Push: `git push origin main --tags`
-5. Update marketplace `ref` in the claude-plugins repo
+**Follow this exact sequence. Do not skip or reorder steps.** There
+is no automated enforcement — the scripts do not call each other or
+verify prior steps ran. Discipline is the only guard until CI is
+implemented (see issue #6).
+
+```bash
+# 1. Build — assemble plugin/dist/ from current source + vendored
+./build
+
+# 2. Test — lint validates source, build validates assembled output
+pytest tests/lint/ tests/build/
+
+# 3. Version — stamp new version into BOTH src and dist plugin.json
+./version bump              # patch
+./version bump --minor      # minor
+./version bump --major      # major
+
+# 4. Commit — everything in one commit: source + dist + version
+git add -A
+git commit -m "Bump version to X.Y.Z"
+
+# 5. Tag
+git tag -a vX.Y.Z -m "Release vX.Y.Z"
+
+# 6. Push
+git push origin main --tags
+
+# 7. Update marketplace ref (if marketplace pins to tags)
+# Edit the marketplace entry's "ref" field, commit, push
+```
+
+**Why this order:**
+- Build before test — tests validate the assembled artifact
+- Test before version — never stamp untested code
+- Version before commit — version bump is part of the release commit
+- One commit — source changes, dist, and version together. No
+  separate "version bump" commit with identical content
+
+**What breaks if you skip steps:**
+- Skip build → tests pass against stale dist, marketplace gets
+  old content
+- Skip test → tag untested code
+- Skip version → dist has old version, marketplace shows wrong
+  version
+- Commit dist without building → dist doesn't match source
 
 The `./version` script is pure stdlib Python — no venv needed. Run
-`./version` with no arguments to show the current version.
-
-### Why not just edit plugin.json by hand?
-
-The script ensures the version in plugin.json, the git commit message,
-and the git tag all agree. Manual edits risk version/tag mismatches
-that break marketplace installs.
+`./version` with no arguments to show the current version. It writes
+to `plugin/src/.claude-plugin/plugin.json` AND
+`plugin/dist/.claude-plugin/plugin.json` so both stay in sync.
 
 ### Agent parameterization note
 
@@ -261,9 +463,10 @@ reliable than runtime parameterization.
 
 ## Agent definitions
 
-Agent `.md` files live in `agents/` and are automatically discovered
-when the plugin is installed. They update when the plugin version is
-bumped and the user refreshes. No manual copying is needed.
+Reusable agent `.md` files live in `assets/agents/`. Plugin-specific
+agents live in `plugin/src/agents/`. Both are assembled into
+`plugin/dist/agents/` by `./build` and automatically discovered when
+the plugin is installed.
 
 Plugin agents cannot use `hooks`, `mcpServers`, or `permissionMode`
 frontmatter (security restriction). Agents that need hooks must be
@@ -360,12 +563,17 @@ purposes. Understanding which file does what is critical.
 
 ### Shipped with the plugin (users get these)
 
+Everything in `plugin/dist/` is what the user gets when they install
+the plugin. This directory is assembled by `./build` — never edit it
+directly.
+
 | Path | Purpose |
 |------|---------|
-| `agents/*.md` | Agent definitions. Auto-discovered when plugin is installed. Users invoke them via `--agent <name>` or `/agents`. |
-| `skills/*/SKILL.md` | Plugin skills. Available to users as `/plugin-name:skill-name`. Native or vendored. |
-| `hooks/hooks.json` | Lifecycle hooks. Fire on Claude Code events in any repo where the plugin is active. |
-| `.claude-plugin/plugin.json` | Plugin manifest. Name, version, description. |
+| `plugin/dist/agents/*.md` | Agent definitions. Assembled from `assets/agents/` (reusable) and `plugin/src/agents/` (plugin-specific). |
+| `plugin/dist/skills/*/SKILL.md` | Plugin skills. Native from `assets/skills/` + vendored from echoskill marketplace. |
+| `plugin/dist/hooks/hooks.json` | Lifecycle hooks. Sourced from `plugin/src/hooks/`. |
+| `plugin/dist/.claude-plugin/plugin.json` | Plugin manifest. Sourced from `plugin/src/.claude-plugin/`. |
+| `plugin/dist/settings.json` | Default agent activation. Sourced from `plugin/src/`. |
 
 **Plugins do NOT inject context into other repos.** They provide
 tools, skills, agents, and hooks — not CLAUDE.md content. The user's
@@ -380,10 +588,13 @@ repo has its own CLAUDE.md for project context.
 | `.claude/skills/*/SKILL.md` | Project-level skills for repo development. NOT shipped with the plugin. Example: `validate-privacy-guard` for running integration tests. |
 | `CONTRIBUTING.md` | Architecture, testing, design constraints, safety rules — everything an agent or developer needs to work on this repo. |
 
-### Key distinction: `skills/` vs `.claude/skills/`
+### Key distinction: `assets/skills/` vs `plugin/dist/skills/` vs `.claude/skills/`
 
-- **`skills/`** — the product. Shipped with the plugin. Available to
-  anyone who installs it. These are what users interact with.
+- **`assets/skills/`** — reusable skills, source of truth. Marketplace
+  candidates. Copied into `plugin/dist/skills/` by `./build`.
+- **`plugin/dist/skills/`** — assembled plugin output. Contains native
+  skills from `assets/skills/` plus vendored skills from marketplace.
+  Never edit directly.
 - **`.claude/skills/`** — developer tools. Only available when you open
   a Claude session in this repo. For internal workflows like testing,
   validation, and development. Never shipped.
@@ -395,7 +606,9 @@ repo has its own CLAUDE.md for project context.
 | How to use the plugin | `README.md` |
 | Architecture, testing, dev workflow | `CONTRIBUTING.md` |
 | `@` imports of README + CONTRIBUTING | `CLAUDE.md` (root) |
-| Agent behavior and scan logic | `agents/*.md` |
-| User-facing skills | `skills/*/SKILL.md` |
+| Reusable agent definitions | `assets/agents/*.md` |
+| Reusable skills | `assets/skills/*/SKILL.md` |
+| Plugin-specific agents | `plugin/src/agents/*.md` |
+| Plugin infrastructure (hooks, config) | `plugin/src/` |
 | Dev-only skills (testing, validation) | `.claude/skills/*/SKILL.md` |
 | Safety rules for this repo's development | `CONTRIBUTING.md` (safety section) |

@@ -57,7 +57,7 @@ def _write_person_md(path: Path) -> None:
 
 
 # Path to the agent source file in the repo under test
-AGENT_SOURCE = Path(__file__).resolve().parent.parent.parent.parent / "agents" / "privacy-audit.md"
+AGENT_SOURCE = Path(__file__).resolve().parent.parent.parent.parent / "assets" / "agents" / "privacy-audit.md"
 
 
 def _init_git_repo(repo_dir: Path, author_name="Test Bot", author_email=_e("bot", "test.example")) -> None:

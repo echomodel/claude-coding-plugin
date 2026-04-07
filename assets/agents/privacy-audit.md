@@ -5,8 +5,7 @@ description: >-
   to check for any personal information leaks. Reports findings by category.
 model: sonnet
 maxTurns: 100
-skills:
-  - pre-publish-privacy-review
+skills: []
 tools:
   - Read
   - Grep

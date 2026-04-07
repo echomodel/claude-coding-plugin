@@ -1,5 +1,0 @@
-{
-  "name": "claude-coding-plugin",
-  "description": "Autonomous refactoring agent with safety-gated publishing. Takes GitHub issues as input, works in isolated worktrees, enforces privacy review, and gates all GitHub writes behind human approval.",
-  "version": "0.1.0"
-}

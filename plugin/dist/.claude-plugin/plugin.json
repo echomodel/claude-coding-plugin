@@ -1,0 +1,5 @@
+{
+  "name": "claude-coding",
+  "description": "Coding agent with privacy-gated commits, session lifecycle management, and reusable skill composition.",
+  "version": "0.2.0"
+}

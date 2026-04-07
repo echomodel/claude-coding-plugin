@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent
-AGENTS_DIR = REPO_ROOT / "agents"
+AGENTS_DIR = REPO_ROOT / "assets" / "agents"
 TESTS_DIR = REPO_ROOT / "tests" / "integration"
 AVAILABLE = [p.stem for p in AGENTS_DIR.glob("*.md")]
 

@@ -161,3 +161,61 @@ between the scan and the push.
 If the privacy-guard agent is not installed or fails to run, tell the
 user. No scan means no push. There is no fallback. Install the agent
 and retry.
+
+## Post-push rescan
+
+If commits were pushed without a scan — because the push happened in
+an environment without scanning enabled, a newer agent version needs
+to re-evaluate previously pushed content, or a push slipped through
+due to permission or tooling gaps — use this workflow to retroactively
+scan what was pushed.
+
+### Setup
+
+Create a temporary branch at the pre-push baseline, push it to
+establish a remote tracking point, then merge main so the pushed
+commits appear as "unpushed" relative to the branch's remote:
+
+```bash
+# Find the last commit that was on remote before the unscanned push
+git log --oneline -10   # identify the baseline commit
+
+# Create and push baseline branch
+git checkout -b rescan-basis <baseline-sha>
+git push -u origin rescan-basis
+
+# Merge main — the pushed commits are now "unpushed" on this branch
+git merge main
+```
+
+### Run the scan
+
+The scan must be run by the user from a shell, not from within an
+existing agent session (subprocesses may lack file permissions):
+
+```bash
+claude --agent privacy-guard -p "scan this repo"
+```
+
+If the repo being scanned is different from the current working
+directory, `cd` to it first. Prefer changing directory over using
+`--add-dir` to pass additional paths — the agent's prompt should
+always be exactly "scan this repo" without modifications. Only use
+`--add-dir` if the agent fails because it cannot access a required
+resource outside the repo (it will say what it needs). This is not
+for redirecting which repo the agent scans — always `cd` for that.
+
+### Interpret and clean up
+
+If the scan passes, clean up:
+
+```bash
+git checkout main
+git branch -D rescan-basis
+git push origin --delete rescan-basis
+```
+
+If the scan finds issues, the content is already pushed. Fix the
+findings in a new commit on main, then push the fix. The rescan
+branch can be deleted either way — it was only scaffolding to make
+the already-pushed commits visible to the scanner.

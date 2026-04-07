@@ -17,16 +17,15 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent
-PLUGIN_JSON = REPO_ROOT / ".claude-plugin" / "plugin.json"
+PLUGIN_SRC_JSON = REPO_ROOT / "plugin" / "src" / ".claude-plugin" / "plugin.json"
+PLUGIN_DIST_JSON = REPO_ROOT / "plugin" / "dist" / ".claude-plugin" / "plugin.json"
 
-# All files that contain the version. Each entry is (path, reader, writer).
-# Add new entries here when version appears in more places.
-VERSION_FILES = [PLUGIN_JSON]
+VERSION_FILES = [PLUGIN_SRC_JSON, PLUGIN_DIST_JSON]
 
 
 def _read_version() -> str:
     """Read current version from plugin.json."""
-    data = json.loads(PLUGIN_JSON.read_text())
+    data = json.loads(PLUGIN_SRC_JSON.read_text())
     return data["version"]
 
 
@@ -87,42 +86,15 @@ def cmd_bump(args):
         print("No files changed — version was already correct?")
         sys.exit(1)
 
-    # Stage and commit
     for path in modified:
-        rel = path.relative_to(REPO_ROOT)
-        subprocess.run(["git", "add", str(rel)], cwd=REPO_ROOT, check=True)
+        print(f"  Updated {path.relative_to(REPO_ROOT)}")
 
-    subprocess.run(
-        ["git", "commit", "-m", f"Bump version to {new}"],
-        cwd=REPO_ROOT, check=True,
-    )
-
+    print(f"\nVersion stamped. Now commit and tag:")
+    print(f"  git add -A")
+    print(f"  git commit -m 'Bump version to {new}'")
     if not args.no_tag:
-        subprocess.run(
-            ["git", "tag", "-a", f"v{new}", "-m", f"Release v{new}"],
-            cwd=REPO_ROOT, check=True,
-        )
-        print(f"Tagged v{new}")
-    else:
-        print("Skipped tag (--no-tag)")
-
-    tag = f"v{new}"
-    name = json.loads(PLUGIN_JSON.read_text()).get("name", "claude-coding-plugin")
-    mp = "../claude-plugins/.claude-plugin/marketplace.json"
-
-    print(f"\nNext steps:")
-    print(f"  1. Push this repo:")
-    print(f"     git push origin main --tags")
-    print(f"")
-    print(f"  2. Update marketplace ref:")
-    print(f"     cd ../claude-plugins")
-    print(f'     sed -i \'\' \'/"name": "{name}"/,/"ref":/ s/"ref": "[^"]*"/"ref": "{tag}"/\' .claude-plugin/marketplace.json')
-    print(f"     # Or manually: set \"ref\": \"{tag}\" for the {name} entry in .claude-plugin/marketplace.json")
-    print(f"     git add -A && git commit -m 'Update {name} to {tag}' && git push")
-    print(f"")
-    print(f"  3. Install/update:")
-    print(f"     claude plugin marketplace update")
-    print(f"     claude plugin install {name}")
+        print(f"  git tag -a v{new} -m 'Release v{new}'")
+    print(f"  git push origin main --tags")
 
 
 def main():
