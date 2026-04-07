@@ -27,18 +27,36 @@ value that represents the entire state of what would be pushed.
 ```
 1. User commits work (may be multiple commits)
 2. Something triggers privacy-guard subagent scan
-3. SubagentStop hook fires:
-   a. Reads agent_transcript_path JSONL
-   b. Verifies prompt wasn't tampered ("skip scan", etc.)
-   c. Verifies agent actually made tool calls (not a faked fast response)
-   d. Reads last_assistant_message for scan result
-   e. Computes sha = git rev-parse HEAD
-   f. Writes cert: ~/.cache/claude-coding-plugin/HEAD-<sha>.passed
-4. User pushes:
+3. PreToolUse(Agent) hook fires BEFORE subagent spawns:
+   a. Captures HEAD SHA to disk (ground truth before agent runs)
+   b. Optionally blocks obviously bad prompts (UX, not security)
+4. Subagent runs the scan
+5. PostToolUse(Agent) hook fires AFTER subagent returns:
+   a. Reads tool_input.prompt — the EXACT prompt that was sent
+   b. Reads tool_response — the subagent's output
+   c. Both in ONE payload — no correlation needed
+   d. Verifies prompt was conformant (no "skip scan", etc.)
+   e. Verifies response indicates clean scan
+   f. Reads HEAD SHA captured in step 3
+   g. If HEAD SHA changed during scan → reject (repo mutated)
+   h. Writes cert: ~/.cache/claude-coding-plugin/scan-<sha>.cert
+6. SubagentStop hook fires (supplementary):
+   a. Provides agent_transcript_path for deep verification
+   b. Verifies agent made real tool calls (not faked)
+7. User pushes:
    a. sha = git rev-parse HEAD (or user-specified ref)
    b. Check cert exists for that sha
    c. git push origin $sha:refs/heads/<branch>
 ```
+
+### Hook roles
+
+| Hook | Role | Why |
+|------|------|-----|
+| PreToolUse(Agent) | **Context gathering** | Capture pre-execution state (HEAD SHA) before agent can change anything. Optional UX block on bad prompts. NOT the security gate. |
+| PostToolUse(Agent) | **Security gate** | Has both exact prompt AND response in one payload. Verifies prompt conformance + scan result. Writes cert. This is the checkpoint. |
+| SubagentStop | **Deep verification** | Provides full transcript JSONL. Verify agent actually made tool calls (git diff, etc.) vs a faked fast response. Supplementary to PostToolUse. |
+| PreToolUse(Bash) | **Push gate** | Blocks `git push` if cert missing or SHA mismatch. |
 
 ### Why HEAD SHA is sufficient
 
@@ -78,26 +96,33 @@ certified SHA, not whatever HEAD moved to.
 
 ### Can the parent agent forge a cert?
 
-No. The cert is written by a SubagentStop hook — a shell script that
-runs outside any agent's context. The parent doesn't control when it
-fires or what it writes.
+No. The cert is written by a PostToolUse hook — a shell script that
+runs outside any agent's context. The hook receives the exact prompt
+and response in one payload. The parent doesn't control when it fires
+or what it writes.
 
 ### Can the parent send "skip scan" to the subagent?
 
-The SubagentStop hook reads `agent_transcript_path` (the subagent's
-full JSONL). It verifies:
-- The prompt wasn't tampered (no "skip", "fake", "report clean")
-- The agent actually made tool calls (git diff, etc.)
-- A fast-faked response with no tool calls gets rejected
+The PostToolUse hook receives `tool_input.prompt` — the exact binary
+content of the prompt the parent sent. The hook checks it for
+tampering keywords ("skip", "fake", "report clean", "ignore
+instructions"). If the prompt is non-conformant, no cert is written.
+
+SubagentStop provides the transcript as a supplementary check —
+verify the agent actually made tool calls (git diff, etc.) vs a
+response that was faked despite a clean-looking prompt.
 
 ### Can the parent race two subagent calls?
 
 In theory: send a real scan and a fake "skip scan" simultaneously.
-The fake returns first, SubagentStop writes the cert.
+The fake returns first, PostToolUse fires, but the hook sees the
+exact prompt — "skip scan" is right there in `tool_input.prompt`.
+Hook rejects it. The real scan's PostToolUse fires next with a
+conformant prompt and valid response. Cert written.
 
-Defense: the hook verifies the transcript has real tool calls. A
-"skip scan" subagent has zero tool calls → hook rejects it. Only a
-subagent that actually ran git commands gets a cert written.
+SubagentStop's transcript verification adds depth: a cleverly worded
+prompt that passes keyword checks but produces a faked response would
+still show zero tool calls in the transcript.
 
 ### Does SHA change with different commit message or author?
 
@@ -144,9 +169,11 @@ The cert is written by the hook, not the agent.
 
 ### Can we correlate scan request to scan response?
 
-Via the transcript at `agent_transcript_path`. The SubagentStop hook
-reads the JSONL, which contains both the initial prompt (request) and
-all tool calls + final response. Single source of truth.
+No correlation needed. PostToolUse(Agent) receives both `tool_input`
+(exact prompt sent) and `tool_response` (what came back) in one JSON
+payload. Same hook event, same invocation. The prompt that produced
+the response is right there — no agentId matching, no file-based
+handoff, no trust chain across events.
 
 ### How many user prompts in a subagent transcript?
 
@@ -166,14 +193,13 @@ All three hook types fire from plugin `hooks/hooks.json`:
 | SubagentStop | (none/agent name) | `last_assistant_message`, `agent_transcript_path`, `agent_id` |
 
 Key findings:
-- Plugin hooks DO support SubagentStop (earlier test failures were
-  due to using `settings.json` instead of `settings.local.json` in
-  a project-level test — plugin hooks work fine)
-- PreToolUse sees the prompt BEFORE the subagent runs — can validate/block
-- PostToolUse sees the result AFTER — includes agentId for correlation
-- SubagentStop provides the transcript path for deep verification
-- The agentId in PostToolUse matches the agent_id in SubagentStop —
-  correlation confirmed
+- All three hook types fire from plugin `hooks/hooks.json`
+- PostToolUse(Agent) is the security gate — receives exact prompt
+  AND response in one payload. No correlation needed.
+- PreToolUse(Agent) fires before the subagent — use for UX (early
+  block) or context gathering (capture HEAD SHA before agent runs)
+- SubagentStop provides transcript for deep verification (tool calls)
+- Plugin agents are namespaced in hooks: `plugin-name:agent-name`
 
 ## Implementation components
 
@@ -182,23 +208,30 @@ Key findings:
 Everything lives in the plugin — no project-level settings needed.
 
 1. **PreToolUse hook** (`hooks/hooks.json`, matcher: `Agent`)
-   - Validates prompt going to privacy-guard subagent
-   - Blocks if prompt contains tampering instructions
-   - Records prompt hash for correlation
+   - Context gathering: captures `git rev-parse HEAD` to disk
+   - UX: optionally blocks obviously bad prompts early
 
-2. **SubagentStop hook** (`hooks/hooks.json`, matcher: `privacy-guard`)
-   - Reads `agent_transcript_path` JSONL
-   - Verifies transcript has real tool calls (not faked)
-   - Reads `last_assistant_message` for scan result
-   - Computes `sha = git rev-parse HEAD`
+2. **PostToolUse hook** (`hooks/hooks.json`, matcher: `Agent`)
+   - Security gate
+   - Reads `tool_input.prompt` — exact binary content of prompt sent
+   - Reads `tool_response` — subagent's output
+   - Verifies prompt conformance (no tampering keywords)
+   - Verifies scan result (completed, no high-severity findings)
+   - Reads HEAD SHA captured by PreToolUse
+   - If HEAD changed during scan → reject (repo mutated mid-scan)
    - Writes cert to cache
 
-3. **PreToolUse hook** (`hooks/hooks.json`, matcher: `Bash(git push*)`)
+3. **SubagentStop hook** (`hooks/hooks.json`, matcher: `privacy-guard`)
+   - Supplementary deep verification
+   - Reads `agent_transcript_path` JSONL
+   - Verifies agent made real tool calls (not faked fast response)
+
+4. **PreToolUse hook** (`hooks/hooks.json`, matcher: `Bash(git push*)`)
    - Reads cert from cache
    - Computes current HEAD SHA
    - Blocks push if cert missing or SHA mismatch
 
-4. **Cert storage**
+5. **Cert storage**
    - Location: `~/.cache/claude-coding-plugin/`
    - Filename: `scan-<sha>.cert`
    - Content: `hash(seed + sha)` or just presence check
@@ -249,15 +282,23 @@ enforcement gate. They're complementary layers, not redundant.
 For pushes outside Claude (user terminal), a git pre-push hook
 provides the same check as a belt-and-suspenders layer.
 
-### Workbench tests (claude-workbench)
+### Workbench tests (claude-workbench, tests/hooks/)
 
-1. **SubagentStop receives last_assistant_message** — proves hook gets output
-2. **SubagentStop receives agent_transcript_path** — proves we can read transcript
-3. **Transcript has exactly one user prompt** — proves no injection
-4. **Transcript has tool calls** — proves real scan happened
-5. **PreToolUse on Agent sees prompt** — optional, proves we can inspect/block
-6. **PreToolUse on Bash catches push variants** — test `git push`, `git  push`, `git push --force`, etc.
-7. **Glob matcher edge cases** — leading spaces, internal spaces, chained commands
+Empirical verification that the hook machinery works. All pass as of
+2026-04-06.
+
+| Test | What it proves |
+|------|---------------|
+| `test_subagent_stop_captures_output` | SubagentStop receives `last_assistant_message` |
+| `test_subagent_stop_provides_transcript_path` | SubagentStop provides JSONL transcript |
+| `test_transcript_has_one_user_prompt` | No prompt injection in subagent transcript |
+| `test_pretooluse_captures_agent_prompt` | PreToolUse(Agent) sees exact prompt |
+| `test_pretooluse_can_block_subagent` | Exit 2 prevents subagent from running |
+| `test_posttool_has_exact_prompt_and_response` | **PostToolUse(Agent) has both prompt AND response in one payload** |
+
+The PostToolUse test is the key finding. It proves the security gate
+is viable: one hook event, both sides of the handoff, exact binary
+content of the prompt, no correlation needed.
 
 ## Related issues
 
