@@ -66,9 +66,9 @@ composes reusable assets. The key principles:
 
 3. **Go vendor pattern for distribution** — `plugin/dist/` is
    committed to main so marketplace install works with no build step.
-   `./build` regenerates it from source + vendored dependencies.
-   In CI, `./build && git diff --exit-code plugin/dist/` verifies
-   the committed dist is current.
+   `make -C plugin/src build` regenerates it from source + vendored
+   dependencies. In CI, run the build and `git diff --exit-code
+   plugin/dist/` to verify the committed dist is current.
 
 4. **Dependency pinning without a new source of truth** — vendored
    skills are snapshots from the marketplace at a specific ref.
@@ -122,7 +122,7 @@ claude-coding/
 | `assets/skills/` | Yes | Yes | Reusable skills — marketplace candidates |
 | `plugin/src/` | Yes | Yes | Authored plugin infrastructure |
 | `plugin/src/agents/` | Yes | Yes | Plugin-specific agents (not reusable) |
-| `plugin/dist/` | **Never** | Yes | Assembled by `./build` — Go vendor pattern |
+| `plugin/dist/` | **Never** | Yes | Assembled by `make -C plugin/src build` — Go vendor pattern |
 
 ### Why `plugin/dist/` is committed (Go vendor pattern)
 
@@ -131,7 +131,7 @@ expects a working plugin at that ref. No build runs at install time.
 This matches Go's `vendor/` directory and protobuf generated code
 patterns — generated output committed for consumer convenience.
 
-In CI, verify dist is current with `./build && git diff --exit-code plugin/dist/`.
+In CI, verify dist is current with `make -C plugin/src build && git diff --exit-code plugin/dist/`.
 
 ### What goes where
 
@@ -192,7 +192,7 @@ This pattern is valuable because:
 The build script assembles `plugin/dist/` from all sources:
 
 ```bash
-./build          # assemble plugin/dist/
+make -C plugin/src build          # assemble plugin/dist/
 ```
 
 Sources assembled into `plugin/dist/`:
@@ -227,11 +227,11 @@ skills =
     ...
 ```
 
-To add a vendored skill: add it to `build.cfg`, run `./build`, commit
+To add a vendored skill: add it to `build.cfg`, run `make -C plugin/src build`, commit
 the updated `plugin/dist/`.
 
 To add a native skill: create `assets/skills/<name>/SKILL.md`, run
-`./build`, commit both the source and the updated `plugin/dist/`.
+`make -C plugin/src build`, commit both the source and the updated `plugin/dist/`.
 
 ## Testing
 
@@ -250,10 +250,10 @@ Static validation of source files. No build step required:
 - Plugin src files exist and are valid JSON
 - `settings.json` agent ref resolves to a real agent file
 
-### Build structural (requires `./build` first)
+### Build structural (requires `make -C plugin/src build` first)
 
 ```bash
-./build
+make -C plugin/src build
 pytest tests/build/
 ```
 
@@ -271,7 +271,7 @@ missing or stale (source files newer than last build).
 In CI, verify committed `plugin/dist/` is current:
 
 ```bash
-./build
+make -C plugin/src build
 git diff --exit-code plugin/dist/
 ```
 
@@ -394,56 +394,29 @@ parameterization. See the open issues for agent contract research.
 
 ## Release workflow
 
-**Follow this exact sequence. Do not skip or reorder steps.** There
-is no automated enforcement — the scripts do not call each other or
-verify prior steps ran. Discipline is the only guard until CI is
-implemented (see issue #6).
-
 ```bash
-# 1. Build — assemble plugin/dist/ from current source + vendored
-./build
+# 1. Build with version bump
+make -C plugin/src build VERSION=X.Y.Z
 
-# 2. Test — lint validates source, build validates assembled output
+# 2. Test
 pytest tests/lint/ tests/build/
 
-# 3. Version — stamp new version into BOTH src and dist plugin.json
-./version bump              # patch
-./version bump --minor      # minor
-./version bump --major      # major
-
-# 4. Commit — everything in one commit: source + dist + version
+# 3. Commit, tag, push
 git add -A
-git commit -m "Bump version to X.Y.Z"
-
-# 5. Tag
+git commit -m "Release vX.Y.Z"
 git tag -a vX.Y.Z -m "Release vX.Y.Z"
-
-# 6. Push
 git push origin main --tags
 
-# 7. Update marketplace ref (if marketplace pins to tags)
-# Edit the marketplace entry's "ref" field, commit, push
+# 4. Update marketplace ref and reinstall
 ```
 
-**Why this order:**
-- Build before test — tests validate the assembled artifact
-- Test before version — never stamp untested code
-- Version before commit — version bump is part of the release commit
-- One commit — source changes, dist, and version together. No
-  separate "version bump" commit with identical content
+The `VERSION` argument stamps the new version in
+`plugin/src/.claude-plugin/plugin.json` before building. The build
+propagates it to `plugin/dist/`. Without `VERSION`, builds use the
+current version.
 
-**What breaks if you skip steps:**
-- Skip build → tests pass against stale dist, marketplace gets
-  old content
-- Skip test → tag untested code
-- Skip version → dist has old version, marketplace shows wrong
-  version
-- Commit dist without building → dist doesn't match source
-
-The `./version` script is pure stdlib Python — no venv needed. Run
-`./version` with no arguments to show the current version. It writes
-to `plugin/src/.claude-plugin/plugin.json` AND
-`plugin/dist/.claude-plugin/plugin.json` so both stay in sync.
+After pushing, update the marketplace entry's `ref` field to the new
+tag, commit and push the marketplace repo, then reinstall the plugin.
 
 ### Agent parameterization note
 
@@ -465,7 +438,7 @@ reliable than runtime parameterization.
 
 Reusable agent `.md` files live in `assets/agents/`. Plugin-specific
 agents live in `plugin/src/agents/`. Both are assembled into
-`plugin/dist/agents/` by `./build` and automatically discovered when
+`plugin/dist/agents/` by `make -C plugin/src build` and automatically discovered when
 the plugin is installed.
 
 Plugin agents cannot use `hooks`, `mcpServers`, or `permissionMode`
@@ -564,7 +537,7 @@ purposes. Understanding which file does what is critical.
 ### Shipped with the plugin (users get these)
 
 Everything in `plugin/dist/` is what the user gets when they install
-the plugin. This directory is assembled by `./build` — never edit it
+the plugin. This directory is assembled by `make -C plugin/src build` — never edit it
 directly.
 
 | Path | Purpose |
@@ -591,7 +564,7 @@ repo has its own CLAUDE.md for project context.
 ### Key distinction: `assets/skills/` vs `plugin/dist/skills/` vs `.claude/skills/`
 
 - **`assets/skills/`** — reusable skills, source of truth. Marketplace
-  candidates. Copied into `plugin/dist/skills/` by `./build`.
+  candidates. Copied into `plugin/dist/skills/` by `make -C plugin/src build`.
 - **`plugin/dist/skills/`** — assembled plugin output. Contains native
   skills from `assets/skills/` plus vendored skills from marketplace.
   Never edit directly.

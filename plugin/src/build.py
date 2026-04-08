@@ -1,16 +1,14 @@
-#!/usr/bin/env python3
-"""Build script for claude-coding.
+"""Build script for claude-coding plugin.
 
 Assembles plugin/dist/ from:
-  - assets/agents/     -> plugin/dist/agents/     (reusable agents)
-  - assets/skills/     -> plugin/dist/skills/     (native skills)
-  - plugin/src/        -> plugin/dist/            (authored plugin infra)
-  - plugin/src/agents/ -> plugin/dist/agents/     (plugin-specific agents)
-  - build.cfg          -> plugin/dist/skills/     (vendored from marketplace)
+  - plugin/src/          -> plugin/dist/  (dirs + *.json only)
+  - assets/agents/       -> plugin/dist/agents/  (overlay)
+  - assets/skills/       -> plugin/dist/skills/  (native)
+  - build.cfg            -> plugin/dist/skills/  (vendored from marketplace)
 
 Usage:
-  ./build          Assemble plugin/dist/ from source
-  ./build --check  Verify plugin/dist/ matches what build would produce
+  python3 build.py             Build dist from current source
+  python3 build.py 0.3.0       Bump version in src, then build
 """
 
 import configparser
@@ -21,10 +19,24 @@ import sys
 import tempfile
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent
-DIST_DIR = REPO_ROOT / "plugin" / "dist"
+SCRIPT_DIR = Path(__file__).resolve().parent          # plugin/src/
+PLUGIN_DIR = SCRIPT_DIR.parent                        # plugin/
+REPO_ROOT = PLUGIN_DIR.parent                         # repo root
+DIST_DIR = PLUGIN_DIR / "dist"
 ASSETS_DIR = REPO_ROOT / "assets"
-PLUGIN_SRC = REPO_ROOT / "plugin" / "src"
+PLUGIN_SRC_JSON = SCRIPT_DIR / ".claude-plugin" / "plugin.json"
+
+
+def bump_version(new_version):
+    """Stamp new version into src plugin.json."""
+    data = json.loads(PLUGIN_SRC_JSON.read_text())
+    old = data.get("version", "0.0.0")
+    if old == new_version:
+        print(f"Version already {new_version}")
+        return
+    data["version"] = new_version
+    PLUGIN_SRC_JSON.write_text(json.dumps(data, indent=2) + "\n")
+    print(f"Version: {old} -> {new_version}")
 
 
 def get_native_skills():
@@ -49,41 +61,32 @@ def clean_dist():
 
 
 def copy_plugin_src():
-    """Copy authored plugin infrastructure from plugin/src/ to plugin/dist/."""
-    if not PLUGIN_SRC.is_dir():
-        return
-
-    for item in PLUGIN_SRC.iterdir():
+    """Copy dirs and *.json from plugin/src/ to plugin/dist/."""
+    for item in SCRIPT_DIR.iterdir():
         dst = DIST_DIR / item.name
-        if item.name == "agents":
-            # Plugin-specific agents handled separately (merged with reusable)
-            continue
         if item.is_dir():
             shutil.copytree(item, dst)
-        else:
+        elif item.is_file() and item.suffix == ".json":
             shutil.copy2(item, dst)
 
     print("  Plugin infra: copied from plugin/src/")
 
 
-def copy_agents():
-    """Merge reusable agents (assets/) and plugin-specific agents (plugin/src/agents/)."""
+def copy_reusable_agents():
+    """Overlay reusable agents from assets/agents/ into dist."""
     dst = DIST_DIR / "agents"
     dst.mkdir(parents=True, exist_ok=True)
 
-    # Reusable agents from assets/
     agents_src = ASSETS_DIR / "agents"
     if agents_src.is_dir():
         for f in agents_src.iterdir():
             if f.is_file():
-                shutil.copy2(f, dst / f.name)
-
-    # Plugin-specific agents from plugin/src/agents/
-    plugin_agents = PLUGIN_SRC / "agents"
-    if plugin_agents.is_dir():
-        for f in plugin_agents.iterdir():
-            if f.is_file():
-                shutil.copy2(f, dst / f.name)
+                target = dst / f.name
+                if target.exists():
+                    print(f"  CONFLICT: assets/agents/{f.name} would overwrite "
+                          f"plugin/src/agents/{f.name}", file=sys.stderr)
+                    sys.exit(1)
+                shutil.copy2(f, target)
 
     count = len(list(dst.glob("*.md")))
     print(f"  Agents: {count} total")
@@ -157,11 +160,11 @@ def build():
     print("Assembling plugin/dist/...")
     clean_dist()
     copy_plugin_src()
-    copy_agents()
+    copy_reusable_agents()
     copy_native_skills()
 
     cfg = load_config()
-    vendored = vendor_skills(cfg)
+    vendor_skills(cfg)
 
     # Summary
     all_skills = sorted(d.name for d in (DIST_DIR / "skills").iterdir() if d.is_dir())
@@ -178,6 +181,8 @@ def build():
 
 
 def main():
+    if len(sys.argv) > 1:
+        bump_version(sys.argv[1])
     build()
 
 

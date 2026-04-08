@@ -164,33 +164,33 @@ assets/              <- reusable, marketplaceable (source of truth)
 plugin/
   src/               <- authored plugin infrastructure
   dist/              <- assembled output (committed, Go vendor pattern)
-build                <- assembles plugin/dist/ from all sources
 build.cfg            <- marketplace URLs for vendored skills
 ```
 
 - **`assets/`** — reusable agents and skills that can be published to
   a marketplace independently. Marketplace entries can point directly
   to paths here (e.g., `assets/agents/privacy-guard`).
-- **`plugin/src/`** — plugin-specific config, hooks, and agents that
-  are coupled to this plugin (e.g., claude-coder).
+- **`plugin/src/`** — plugin-specific config, hooks, agents, and build
+  tooling. Includes `build.py`, `Makefile`, and `.claude-plugin/plugin.json`
+  (the version source of truth).
 - **`plugin/dist/`** — fully assembled plugin. **Never edit directly.**
-  Run `./build` to regenerate. Committed to main so marketplace install
-  works with no build step (Go vendor pattern).
+  Run `make -C plugin/src build` to regenerate. Committed to main so
+  marketplace install works with no build step (Go vendor pattern).
 
 ## Building and distributing
 
 ### Build
 
-`./build` assembles `plugin/dist/` from source files, plugin
-infrastructure, and vendored marketplace skills. You must run it
-before:
+`make -C plugin/src build` assembles `plugin/dist/` from source files,
+plugin infrastructure, and vendored marketplace skills. You must run
+it before:
 
 - Using `--plugin-dir plugin/dist/` for local testing
 - Committing and pushing for marketplace references to work
 - Tagging a release
 
 ```bash
-./build
+make -C plugin/src build
 ```
 
 ### Local testing (no marketplace)
@@ -226,40 +226,26 @@ claude plugin install claude-coding@<marketplace-name> --scope user
 
 ### Release workflow
 
-Every release follows this exact sequence. Do not skip or reorder
-steps — there is no automated enforcement, so discipline matters.
-
 ```bash
-# 1. Build — assemble plugin/dist/ from current source
-./build
+# 1. Build with version bump
+make -C plugin/src build VERSION=X.Y.Z
 
-# 2. Test — validate source and build output
+# 2. Test
 pytest tests/lint/ tests/build/
 
-# 3. Version — stamp new version into src and dist plugin.json
-./version bump            # patch: 0.1.0 → 0.1.1
-./version bump --minor    # minor: 0.1.1 → 0.2.0
-./version bump --major    # major: 0.2.0 → 1.0.0
-
-# 4. Commit and tag
+# 3. Commit, tag, push
 git add -A
-git commit -m "Bump version to X.Y.Z"
+git commit -m "Release vX.Y.Z"
 git tag -a vX.Y.Z -m "Release vX.Y.Z"
-
-# 5. Push
 git push origin main --tags
 ```
 
-**Why this order matters:**
-- `./build` must run first — dist must reflect current source
-- Tests must pass before versioning — never stamp untested code
-- `./version bump` writes to both `plugin/src/` and `plugin/dist/`
-  plugin.json files — if you build after version bump, the version
-  in dist gets overwritten by the build copying from src (which is
-  correct, but only if you don't edit source between version and
-  commit)
-- Commit everything together — source changes, dist, and version
-  bump in one commit
+The `VERSION` argument stamps the new version in
+`plugin/src/.claude-plugin/plugin.json` before building. The build
+propagates it to `plugin/dist/`. Without `VERSION`, builds use the
+current version in src.
+
+After pushing, update the marketplace ref and reinstall the plugin.
 
 ### Marketplace updates
 
