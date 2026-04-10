@@ -162,6 +162,32 @@ If the privacy-guard agent is not installed or fails to run, tell the
 user. No scan means no push. There is no fallback. Install the agent
 and retry.
 
+## When privacy-guard fails with "person_md_not_found"
+
+The privacy-guard agent requires `~/.config/ai-common/PERSON.md` to
+load personal patterns. This file lives outside any project directory,
+so sandbox restrictions may block access.
+
+**If running as a subagent (Step 7):** The subagent inherits the
+parent session's working directory permissions. If the parent session
+was started from a project directory, the
+subagent cannot read `~/.config/`. Tell the user to run the scan
+from the terminal instead:
+
+```bash
+cd <repo-path> && claude --agent privacy-guard --add-dir ~/.config/ai-common -p "scan this repo"
+```
+
+**If running from the terminal:** Use `--add-dir` to grant access:
+
+```bash
+claude --agent privacy-guard --add-dir ~/.config/ai-common -p "scan this repo"
+```
+
+The `--add-dir` flag grants the agent read access to the specified
+directory for that session only. The prompt must still be exactly
+"scan this repo" — do not modify it.
+
 ## Post-push rescan
 
 If commits were pushed without a scan — because the push happened in
@@ -194,16 +220,13 @@ The scan must be run by the user from a shell, not from within an
 existing agent session (subprocesses may lack file permissions):
 
 ```bash
-claude --agent privacy-guard -p "scan this repo"
+claude --agent privacy-guard --add-dir ~/.config/ai-common -p "scan this repo"
 ```
 
 If the repo being scanned is different from the current working
-directory, `cd` to it first. Prefer changing directory over using
-`--add-dir` to pass additional paths — the agent's prompt should
-always be exactly "scan this repo" without modifications. Only use
-`--add-dir` if the agent fails because it cannot access a required
-resource outside the repo (it will say what it needs). This is not
-for redirecting which repo the agent scans — always `cd` for that.
+directory, `cd` to it first. The `--add-dir ~/.config/ai-common`
+grants access to PERSON.md (required for scanning). The prompt must
+always be exactly "scan this repo" without modifications.
 
 ### Interpret and clean up
 
